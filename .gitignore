@@ -1,0 +1,14 @@
+# 가상환경 / 빌드 산출물 (새 PC에서 setup으로 재생성)
+.venv/
+.build_librealsense/
+__pycache__/
+*.pyc
+
+# 수집 데이터 (개인정보 포함 가능 — 저장소에 올리지 않음)
+data_v2/
+data_d435i/
+data/
+
+# OS
+.DS_Store
+build.log

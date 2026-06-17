@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>립리딩 수집 — D435i</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="app">
+    <!-- 좌: 영상 -->
+    <section class="video-pane">
+      <div class="video-wrap">
+        <img id="video" src="{{ url_for('video_feed') }}" alt="camera">
+        <div id="recBadge" class="rec-badge hidden">● REC</div>
+        <div id="faceBadge" class="face-badge">얼굴 인식 대기</div>
+        <div class="progress-overlay">
+          <div id="progBar" class="prog-bar"></div>
+        </div>
+      </div>
+      <div class="word-prompt">
+        <span id="wordKind" class="kind-tag">명령어</span>
+        <span id="curWord" class="cur-word">—</span>
+        <span id="wordCount" class="word-count"></span>
+      </div>
+      <p id="statusLine" class="status-line">카메라 시작 중...</p>
+    </section>
+
+    <!-- 우: 컨트롤 -->
+    <aside class="control-pane">
+      <h1>D435i 립리딩 수집</h1>
+
+      <div class="setup">
+        <label>데이터셋
+          <input id="dataset" type="text" value="data_v2">
+        </label>
+        <label>화자 ID
+          <input id="speaker" type="text" placeholder="예: spk05">
+        </label>
+        <button id="setSpeaker" class="btn primary">화자 설정</button>
+      </div>
+
+      <div class="totals">
+        총 저장: <b id="total">0</b> takes
+      </div>
+
+      <div class="buttons">
+        <button id="recordBtn" class="btn record" disabled>녹화 (Space)</button>
+        <div class="row">
+          <button id="prevBtn" class="btn">◀ 이전 (P)</button>
+          <button id="nextBtn" class="btn">다음 (N) ▶</button>
+        </div>
+        <button id="resetBtn" class="btn ghost">현재 단어 카운트 리셋</button>
+      </div>
+
+      <ul id="wordList" class="word-list"></ul>
+
+      <div class="hints">
+        <p><b>단축키</b> &nbsp; Space=녹화 · N=다음 · P=이전</p>
+        <p>녹화는 2초 자동(60프레임). 입체조는 움직이며, 명령어는 또박또박 크게.</p>
+      </div>
+    </aside>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
