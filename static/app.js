@@ -113,3 +113,12 @@ async function poll() {
 }
 setInterval(poll, 150);
 poll();
+
+// ── 영상: 스냅샷 폴링 (MJPEG 멈춤 회피, 다음 프레임은 직전 로드 후 요청) ──
+const videoImg = $("video");
+function nextFrame() {
+  videoImg.src = "/snapshot?t=" + Date.now();
+}
+videoImg.onload = () => setTimeout(nextFrame, 33);   // ~30fps
+videoImg.onerror = () => setTimeout(nextFrame, 200); // 준비 전이면 잠시 후 재시도
+nextFrame();

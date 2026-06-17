@@ -100,6 +100,8 @@ class Collector:
         self.recording = False
         self.buf_mp: list[np.ndarray] = []
         self.buf_depth: list[np.ndarray] = []
+        self.buf_frames: list[np.ndarray] = []   # 원본 컬러 프레임 (mp4 저장용)
+        self.save_video = os.environ.get("SAVE_VIDEO", "1") == "1"
         self.takes = {w["name"]: 0 for w in WORDS}
         self.latest_jpeg: bytes | None = None
         self.status = "카메라 시작 중..."
@@ -141,7 +143,7 @@ class Collector:
             self.speaker = (speaker or "").strip()
             self.dataset = (dataset or "").strip() or DEFAULT_DATASET
             self.recording = False
-            self.buf_mp, self.buf_depth = [], []
+            self.buf_mp, self.buf_depth, self.buf_frames = [], [], []
             if self.speaker:
                 self._refresh_takes_locked()
                 self.status = f"{self.speaker} 준비 완료 — 녹화 가능"
@@ -155,33 +157,33 @@ class Collector:
                 return False
             if not self.recording:
                 self.recording = True
-                self.buf_mp, self.buf_depth = [], []
+                self.buf_mp, self.buf_depth, self.buf_frames = [], [], []
                 self.status = "녹화 중..."
             return True
 
     def cancel_record(self):
         with self.lock:
             self.recording = False
-            self.buf_mp, self.buf_depth = [], []
+            self.buf_mp, self.buf_depth, self.buf_frames = [], [], []
             self.status = "녹화 취소"
 
     def next_word(self):
         with self.lock:
             self.recording = False
-            self.buf_mp, self.buf_depth = [], []
+            self.buf_mp, self.buf_depth, self.buf_frames = [], [], []
             self.wi = (self.wi + 1) % len(self.words)
 
     def prev_word(self):
         with self.lock:
             self.recording = False
-            self.buf_mp, self.buf_depth = [], []
+            self.buf_mp, self.buf_depth, self.buf_frames = [], [], []
             self.wi = (self.wi - 1) % len(self.words)
 
     def select_word(self, index: int):
         with self.lock:
             if 0 <= index < len(self.words):
                 self.recording = False
-                self.buf_mp, self.buf_depth = [], []
+                self.buf_mp, self.buf_depth, self.buf_frames = [], [], []
                 self.wi = index
 
     def reset_take(self):
@@ -197,6 +199,16 @@ class Collector:
         wdir.mkdir(parents=True, exist_ok=True)
         np.save(wdir / f"take_{n:02d}_mp.npy", np.array(self.buf_mp, np.float32))
         np.save(wdir / f"take_{n:02d}_depth.npy", np.array(self.buf_depth, np.float32))
+        # 원본 컬러 영상(mp4) 저장
+        video_name = None
+        if self.save_video and self.buf_frames:
+            h, w = self.buf_frames[0].shape[:2]
+            video_name = f"take_{n:02d}_color.mp4"
+            vw = cv2.VideoWriter(str(wdir / video_name),
+                                 cv2.VideoWriter_fourcc(*"mp4v"), FPS, (w, h))
+            for fr in self.buf_frames:
+                vw.write(fr)
+            vw.release()
         # 재처리·검증용 메타데이터
         meta = {
             "speaker": self.speaker, "word": word, "take": n,
@@ -204,8 +216,7 @@ class Collector:
             "color_res": [COLOR_W, COLOR_H], "depth_res": [DEPTH_W, DEPTH_H],
             "fps": FPS, "rec_seconds": REC_SECONDS,
             "depth_scale": self.depth_scale,
-            "depth_preset": "high_accuracy",
-            "depth_filters": ["spatial", "temporal", "hole_filling"],
+            "video": video_name,
             "landmark_indices": ALL_LANDMARK_INDICES,
             "intrinsics": self.intrinsics,
             "saved_at": time.time(),
@@ -214,7 +225,7 @@ class Collector:
             json.dumps(meta, ensure_ascii=False, indent=2))
         self.takes[word] = n + 1
         self.recording = False
-        self.buf_mp, self.buf_depth = [], []
+        self.buf_mp, self.buf_depth, self.buf_frames = [], [], []
         self.status = f"저장 완료: {word} take {n}"
 
     # ── 상태 스냅샷 (프론트로 전송) ──
@@ -258,23 +269,22 @@ class Collector:
         depth_sensor = dev.first_depth_sensor()
         self.depth_scale = depth_sensor.get_depth_scale()
 
-        # 깊이 프리셋 → High Accuracy (측정 노이즈↓)
-        try:
-            if depth_sensor.supports(rs.option.visual_preset):
-                depth_sensor.set_option(
-                    rs.option.visual_preset,
-                    float(rs.rs400_visual_preset.high_accuracy))
-        except Exception:
-            pass
-
-        # 노출: auto-exposure는 켜두되 '프레임레이트 우선'으로 → 어두워도 30fps 유지
-        # (노출을 끄거나 우선순위를 노출에 두면 프레임이 초당 몇 장으로 떨어져 멈춤)
-        try:
-            color_sensor = dev.first_color_sensor()
-            if color_sensor.supports(rs.option.auto_exposure_priority):
-                color_sensor.set_option(rs.option.auto_exposure_priority, 0)
-        except Exception:
-            pass
+        # 센서 옵션 설정은 macOS RSUSB 백엔드에서 스트림을 멈추게 할 수 있어 기본 OFF.
+        # 안정적인 환경(주로 Windows)에서 화질을 높이려면 SENSOR_TUNE=1 로 켠다.
+        if os.environ.get("SENSOR_TUNE", "0") == "1":
+            try:  # 깊이 프리셋 → High Accuracy (측정 노이즈↓)
+                if depth_sensor.supports(rs.option.visual_preset):
+                    depth_sensor.set_option(
+                        rs.option.visual_preset,
+                        float(rs.rs400_visual_preset.high_accuracy))
+            except Exception:
+                pass
+            try:  # 노출 '프레임레이트 우선' → 어두워도 30fps 유지
+                color_sensor = dev.first_color_sensor()
+                if color_sensor.supports(rs.option.auto_exposure_priority):
+                    color_sensor.set_option(rs.option.auto_exposure_priority, 0)
+            except Exception:
+                pass
 
         # 카메라 내부파라미터 저장 (정렬 후 깊이는 컬러 intrinsics를 따름)
         try:
@@ -355,7 +365,7 @@ class Collector:
                     mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts)
                 self.frame_idx += 1
 
-                disp = color
+                disp = color.copy()   # 그림은 복사본에 → color는 깨끗하게 보존(영상 저장용)
                 has_face = bool(res.face_landmarks)
                 pts_mp = pts_depth = None
 
@@ -394,6 +404,8 @@ class Collector:
                     if self.recording and pts_mp is not None:
                         self.buf_mp.append(pts_mp)
                         self.buf_depth.append(pts_depth)
+                        if self.save_video:
+                            self.buf_frames.append(color.copy())
                         if len(self.buf_mp) >= REC_FRAMES:
                             self._save_take_locked()
                     rec = self.recording
@@ -438,6 +450,18 @@ def video_feed():
                    + frame + b"\r\n")
             time.sleep(1.0 / FPS)
     return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/snapshot")
+def snapshot():
+    # 최신 프레임 1장 (브라우저가 폴링) — MJPEG보다 안정적
+    with collector.lock:
+        frame = collector.latest_jpeg
+    if frame is None:
+        return ("", 503)
+    resp = Response(frame, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/api/state")

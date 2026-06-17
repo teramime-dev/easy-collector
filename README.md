@@ -12,6 +12,8 @@ Intel RealSense **D435i** 카메라로 발화 시 입술 랜드마크(76점)를 
 ```
 data_v2/{화자ID}/{단어}/take_NN_mp.npy      (60, 76, 3)  MediaPipe 추정 좌표 (화면 픽셀 + z)
                        take_NN_depth.npy   (60, 76, 3)  RealSense 실측 3D (mm)
+                       take_NN_color.mp4    원본 컬러 영상 (SAVE_VIDEO=0 으로 끌 수 있음)
+                       take_NN_meta.json    해상도·intrinsics·depth_scale 등
 ```
 
 수집 단어: 입체조(기준동작) + 명령어 8개(선택·확인·뒤로·취소·다음·확대·축소·처음으로)
