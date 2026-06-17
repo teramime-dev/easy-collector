@@ -65,14 +65,14 @@ OUTER_LIP_LOCAL = [15, 41, 12, 11, 10, 0, 46, 47, 48, 74, 51, 66, 59, 73, 56, 8,
 # ── 수집 단어: 기준동작(입체조) + 명령어 11개 ──
 WORDS = [
     {"name": "입체조", "target": 5, "kind": "calib"},
-    {"name": "선택", "target": 8, "kind": "cmd"},
-    {"name": "확인", "target": 8, "kind": "cmd"},
-    {"name": "뒤로", "target": 8, "kind": "cmd"},
-    {"name": "취소", "target": 8, "kind": "cmd"},
-    {"name": "다음", "target": 8, "kind": "cmd"},
-    {"name": "확대", "target": 8, "kind": "cmd"},
-    {"name": "축소", "target": 8, "kind": "cmd"},
-    {"name": "처음으로", "target": 8, "kind": "cmd"},
+    {"name": "선택", "target": 10, "kind": "cmd"},
+    {"name": "확인", "target": 10, "kind": "cmd"},
+    {"name": "뒤로", "target": 10, "kind": "cmd"},
+    {"name": "취소", "target": 10, "kind": "cmd"},
+    {"name": "다음", "target": 10, "kind": "cmd"},
+    {"name": "확대", "target": 10, "kind": "cmd"},
+    {"name": "축소", "target": 10, "kind": "cmd"},
+    {"name": "처음으로", "target": 10, "kind": "cmd"},
 ]
 
 
