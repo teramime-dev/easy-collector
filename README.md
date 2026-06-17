@@ -68,6 +68,12 @@ run.bat     더블클릭   → http://localhost:5000
 | `failed to set power state` / 카메라 안 잡힘 | macOS는 RealSense 장치 점유에 **root 권한** 필요 | **반드시 `sudo`로 실행** — `run.command`가 이미 sudo로 돎 |
 | 브라우저가 `localhost:5000` 안 열림 | macOS **AirPlay 수신**이 5000 포트 점유 | **5050 포트 사용** (이미 반영). 바꾸려면 `PORT=5060 ./run.command` |
 | 감지(1대)는 되는데 스트림이 `No device connected` | **USB 2.0** 케이블/허브로 연결됨 (대역폭·전원 부족) | **USB 3.0** 케이블 + **맥북 본체 포트 직결** (USB 2.0 허브·도크 ❌) |
+| 영상이 안 뜨고 `Frame didn't arrive` 로 멈춤 | 고해상도(FHD+720p) 대역폭을 USB가 못 버팀 | **`LOWRES=1 ./run.command`** 로 640×480 사용 (맥에서 가장 안정적) |
+
+> **해상도 설정**: 기본은 고화질(컬러 1920×1080 + 깊이 1280×720). 환경변수로 조절합니다.
+> - 낮추기: `LOWRES=1 ./run.command` → 640×480
+> - 개별 지정: `COLOR_W=1280 COLOR_H=720 DEPTH_W=848 DEPTH_H=480 ./run.command`
+> - Windows(`run.bat`)는 USB 백엔드가 달라 고해상도가 잘 돌아갑니다. macOS는 640×480이 가장 안정적입니다.
 
 > USB 연결 속도 확인: 아래 값이 **3** 이어야 USB 3.0 입니다.
 > ```bash

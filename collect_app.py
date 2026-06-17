@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -36,11 +37,14 @@ from mediapipe.tasks.python import vision as mp_vision
 # ── 설정 ──
 BASE_DIR = Path(__file__).resolve().parent
 FACE_MODEL = str(BASE_DIR / "face_landmarker_v2_with_blendshapes.task")
-# macOS(RSUSB 백엔드)는 고해상도 동시 스트림을 못 버텨 프레임이 멈춘다.
-# → 검증된 640x480(컬러+깊이)로 안정 동작. 더 높은 화질은 Windows에서 가능.
-COLOR_W, COLOR_H = 640, 480
-DEPTH_W, DEPTH_H = 640, 480
-FPS = 30
+# 해상도는 환경변수로 조절 (기본 = 고화질: 컬러 FHD + 깊이 720p).
+# macOS는 USB 대역폭이 빠듯해 프레임이 멈추면 LOWRES=1 로 640x480 사용:
+#   LOWRES=1 ./run.command   (또는 COLOR_W/COLOR_H/DEPTH_W/DEPTH_H 개별 지정)
+COLOR_W = int(os.environ.get("COLOR_W", "1920"))
+COLOR_H = int(os.environ.get("COLOR_H", "1080"))
+DEPTH_W = int(os.environ.get("DEPTH_W", "1280"))
+DEPTH_H = int(os.environ.get("DEPTH_H", "720"))
+FPS = int(os.environ.get("FPS", "30"))
 # 랜드마크 정규화 좌표 → 픽셀 변환 및 화면 크기 기준 (= 컬러 해상도)
 W, H = COLOR_W, COLOR_H
 REC_SECONDS = 2.0
@@ -499,8 +503,6 @@ def _lan_ip() -> str:
 
 
 def main():
-    import os
-
     t = threading.Thread(target=collector.run, daemon=True)
     t.start()
 
