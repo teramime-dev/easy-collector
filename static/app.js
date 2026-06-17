@@ -22,13 +22,27 @@ function render(s) {
   const cur = s.words[s.wi] || { count: 0, target: 0 };
   $("wordCount").textContent = `${cur.count} / ${cur.target}`;
 
+  // 현재 단어 수행 안내
+  const guide = $("wordGuide");
+  guide.textContent = s.guide || "";
+  guide.classList.toggle("calib", s.kind === "calib");
+
   // 총계, 상태
   $("total").textContent = s.total;
   $("statusLine").textContent = s.status;
 
-  // 얼굴 인식
+  // 얼굴 인식 + 거리 (권장 40~50cm)
   const fb = $("faceBadge");
-  fb.textContent = s.has_face ? "얼굴 인식됨" : "얼굴 없음";
+  if (s.has_face) {
+    const cm = (s.distance_mm || 0) / 10;
+    let tag = "";
+    if (cm > 0) tag = cm < 35 ? " · 너무 가까움" : cm > 55 ? " · 너무 멈" : " · 적정";
+    fb.textContent = `얼굴 인식됨 · ${cm.toFixed(0)}cm${tag}`;
+    fb.classList.toggle("warn", cm > 0 && (cm < 35 || cm > 55));
+  } else {
+    fb.textContent = "얼굴 없음";
+    fb.classList.remove("warn");
+  }
   fb.classList.toggle("ok", s.has_face);
 
   // 녹화 상태

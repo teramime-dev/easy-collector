@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -35,7 +36,13 @@ from mediapipe.tasks.python import vision as mp_vision
 # ── 설정 ──
 BASE_DIR = Path(__file__).resolve().parent
 FACE_MODEL = str(BASE_DIR / "face_landmarker_v2_with_blendshapes.task")
-W, H, FPS = 640, 480, 30
+# macOS(RSUSB 백엔드)는 고해상도 동시 스트림을 못 버텨 프레임이 멈춘다.
+# → 검증된 640x480(컬러+깊이)로 안정 동작. 더 높은 화질은 Windows에서 가능.
+COLOR_W, COLOR_H = 640, 480
+DEPTH_W, DEPTH_H = 640, 480
+FPS = 30
+# 랜드마크 정규화 좌표 → 픽셀 변환 및 화면 크기 기준 (= 컬러 해상도)
+W, H = COLOR_W, COLOR_H
 REC_SECONDS = 2.0
 REC_FRAMES = int(FPS * REC_SECONDS)  # 한 발화 고정 길이 (= 60프레임)
 DEFAULT_DATASET = "data_v2"          # 기존 data_d435i 와 분리
@@ -58,13 +65,10 @@ WORDS = [
     {"name": "확인", "target": 8, "kind": "cmd"},
     {"name": "뒤로", "target": 8, "kind": "cmd"},
     {"name": "취소", "target": 8, "kind": "cmd"},
-    {"name": "실행", "target": 8, "kind": "cmd"},
     {"name": "다음", "target": 8, "kind": "cmd"},
-    {"name": "열기", "target": 8, "kind": "cmd"},
-    {"name": "닫기", "target": 8, "kind": "cmd"},
+    {"name": "확대", "target": 8, "kind": "cmd"},
+    {"name": "축소", "target": 8, "kind": "cmd"},
     {"name": "처음으로", "target": 8, "kind": "cmd"},
-    {"name": "네", "target": 8, "kind": "cmd"},
-    {"name": "아니오", "target": 8, "kind": "cmd"},
 ]
 
 
@@ -97,14 +101,28 @@ class Collector:
         self.status = "카메라 시작 중..."
         self.has_face = False
         self.depth_scale = 1.0
+        self.distance_mm = 0.0          # 코끝~카메라 거리(실시간 표시용)
+        self.intrinsics = None          # 카메라 내부파라미터(메타데이터 저장용)
         self.frame_idx = 0
         self.running = True
         self.camera_ok = False
         self._landmarker = None
+        # 깊이 후처리 필터 (노이즈·구멍 감소) — temporal은 상태를 유지하므로 1회 생성
+        self._spatial = rs.spatial_filter()
+        self._temporal = rs.temporal_filter()
+        self._hole = rs.hole_filling_filter()
 
     # ── 단어 폴더 정보 ──
     def _cur_word(self) -> str:
         return self.words[self.wi]["name"]
+
+    # ── 단어별 수행 안내문 (UI 표시용) ──
+    @staticmethod
+    def _guide(w: dict) -> str:
+        if w["kind"] == "calib":
+            return ("입 운동(소리 없이 입모양만): 크게 '아' 벌리기 → 양옆으로 활짝 '이' "
+                    "→ 앞으로 모아 '우' → 다물기. 2초간 과장되게 천천히 한 번.")
+        return f"입모양으로 또박또박 «{w['name']}» 라고 말하세요. (2초)"
 
     def _refresh_takes_locked(self):
         for w in self.words:
@@ -175,6 +193,21 @@ class Collector:
         wdir.mkdir(parents=True, exist_ok=True)
         np.save(wdir / f"take_{n:02d}_mp.npy", np.array(self.buf_mp, np.float32))
         np.save(wdir / f"take_{n:02d}_depth.npy", np.array(self.buf_depth, np.float32))
+        # 재처리·검증용 메타데이터
+        meta = {
+            "speaker": self.speaker, "word": word, "take": n,
+            "frames": len(self.buf_mp),
+            "color_res": [COLOR_W, COLOR_H], "depth_res": [DEPTH_W, DEPTH_H],
+            "fps": FPS, "rec_seconds": REC_SECONDS,
+            "depth_scale": self.depth_scale,
+            "depth_preset": "high_accuracy",
+            "depth_filters": ["spatial", "temporal", "hole_filling"],
+            "landmark_indices": ALL_LANDMARK_INDICES,
+            "intrinsics": self.intrinsics,
+            "saved_at": time.time(),
+        }
+        (wdir / f"take_{n:02d}_meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2))
         self.takes[word] = n + 1
         self.recording = False
         self.buf_mp, self.buf_depth = [], []
@@ -190,10 +223,12 @@ class Collector:
                 "word": self._cur_word(),
                 "kind": self.words[self.wi]["kind"],
                 "target": self.words[self.wi]["target"],
+                "guide": self._guide(self.words[self.wi]),
                 "recording": self.recording,
                 "progress": len(self.buf_mp),
                 "rec_frames": REC_FRAMES,
                 "has_face": self.has_face,
+                "distance_mm": round(self.distance_mm),
                 "camera_ok": self.camera_ok,
                 "status": self.status,
                 "total": sum(self.takes.values()),
@@ -212,10 +247,42 @@ class Collector:
     def _start_pipe(self):
         pipe = rs.pipeline()
         cfg = rs.config()
-        cfg.enable_stream(rs.stream.color, W, H, rs.format.bgr8, FPS)
-        cfg.enable_stream(rs.stream.depth, W, H, rs.format.z16, FPS)
+        cfg.enable_stream(rs.stream.color, COLOR_W, COLOR_H, rs.format.bgr8, FPS)
+        cfg.enable_stream(rs.stream.depth, DEPTH_W, DEPTH_H, rs.format.z16, FPS)
         profile = pipe.start(cfg)
-        self.depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
+        dev = profile.get_device()
+        depth_sensor = dev.first_depth_sensor()
+        self.depth_scale = depth_sensor.get_depth_scale()
+
+        # 깊이 프리셋 → High Accuracy (측정 노이즈↓)
+        try:
+            if depth_sensor.supports(rs.option.visual_preset):
+                depth_sensor.set_option(
+                    rs.option.visual_preset,
+                    float(rs.rs400_visual_preset.high_accuracy))
+        except Exception:
+            pass
+
+        # 노출: auto-exposure는 켜두되 '프레임레이트 우선'으로 → 어두워도 30fps 유지
+        # (노출을 끄거나 우선순위를 노출에 두면 프레임이 초당 몇 장으로 떨어져 멈춤)
+        try:
+            color_sensor = dev.first_color_sensor()
+            if color_sensor.supports(rs.option.auto_exposure_priority):
+                color_sensor.set_option(rs.option.auto_exposure_priority, 0)
+        except Exception:
+            pass
+
+        # 카메라 내부파라미터 저장 (정렬 후 깊이는 컬러 intrinsics를 따름)
+        try:
+            cp = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            it = cp.get_intrinsics()
+            self.intrinsics = {
+                "width": it.width, "height": it.height,
+                "fx": it.fx, "fy": it.fy, "ppx": it.ppx, "ppy": it.ppy,
+                "model": str(it.model), "coeffs": list(it.coeffs),
+            }
+        except Exception:
+            pass
         return pipe
 
     # ── 캡처 스레드 본체 ──
@@ -223,7 +290,18 @@ class Collector:
         # 모델을 먼저 로드해 start~첫 프레임 사이 공백을 없앤다.
         self._landmarker = make_landmarker()
         align = rs.align(rs.stream.color)
-        pipe = self._start_pipe()
+        # 카메라가 안정적으로 잡힐 때까지 재시도 (USB 일시 끊김에도 스레드가 죽지 않음)
+        pipe = None
+        while self.running and pipe is None:
+            try:
+                pipe = self._start_pipe()
+            except Exception as e:
+                with self.lock:
+                    self.camera_ok = False
+                    self.status = f"카메라 연결 대기 중... ({str(e)[:45]})"
+                time.sleep(2.0)
+        if pipe is None:
+            return
         with self.lock:
             self.camera_ok = True
             self.status = "준비 완료 — 화자 ID 입력 후 녹화하세요"
@@ -260,6 +338,10 @@ class Collector:
                 dframe = frames.get_depth_frame()
                 if not cframe or not dframe:
                     continue
+                # 깊이 후처리 (노이즈·구멍 감소)
+                dframe = self._spatial.process(dframe)
+                dframe = self._temporal.process(dframe)
+                dframe = self._hole.process(dframe).as_depth_frame()
                 color = np.asanyarray(cframe.get_data())
                 depth = np.asanyarray(dframe.get_data())
 
@@ -294,8 +376,17 @@ class Collector:
                         cv2.circle(disp, (int(pts_mp[li, 0]), int(pts_mp[li, 1])),
                                    2, (0, 255, 0), -1)
 
+                # 카메라~얼굴 거리 (유효 깊이 점들의 중앙값, mm)
+                dist_mm = 0.0
+                if pts_depth is not None:
+                    zz = pts_depth[:, 2]
+                    valid = zz[zz > 0]
+                    if valid.size:
+                        dist_mm = float(np.median(valid))
+
                 with self.lock:
                     self.has_face = has_face
+                    self.distance_mm = dist_mm
                     if self.recording and pts_mp is not None:
                         self.buf_mp.append(pts_mp)
                         self.buf_depth.append(pts_depth)
@@ -312,7 +403,11 @@ class Collector:
                     with self.lock:
                         self.latest_jpeg = jpg.tobytes()
         finally:
-            pipe.stop()
+            if pipe is not None:
+                try:
+                    pipe.stop()
+                except Exception:
+                    pass
             if self._landmarker:
                 self._landmarker.close()
 
